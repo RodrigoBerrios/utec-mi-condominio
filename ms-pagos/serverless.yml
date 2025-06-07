@@ -1,0 +1,111 @@
+service: g2-ms-pagos
+
+frameworkVersion: '3'
+
+custom:
+  dotenv:
+    path: ../.env
+  esbuild:
+    bundle: true
+    minify: false        # Si quieres minimizar el código en producción, pon true
+    sourcemap: true      # Útil para debugging, puedes quitarlo en prod
+    target: 'node18'     # Asegúrate de usar el target que corresponda a Node.js 18+
+    platform: 'node'     # Lambda corre Node.js, no "browser"
+    keepNames: true      # Opcional: conserva nombres de funciones/clases
+    external:
+      - aws-sdk         # AWS Lambda ya provee aws-sdk, no es necesario empaquetarlo
+      - pg-native       # PostgreSQL native opcional
+    exclude:
+      - 'aws-sdk'
+    mainFields: ['main', 'module']  # Resolución de campos en package.json
+    define:
+      'process.env.NODE_ENV': '"production"'
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+  environment:
+    STAGE: ${self:provider.stage}
+    DB_HOST: ${env:DB_HOST}
+    DB_PORT: ${env:DB_PORT, '5432'}
+    DB_NAME: ${env:DB_NAME}
+    DB_USER: ${env:DB_USER}
+    DB_PASSWORD: ${env:DB_PASSWORD}
+    EVENTBRIDGE_BUS: ${env:EVENTBRIDGE_BUS, 'condominio-events'}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - events:PutEvents
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - rds:DescribeDBInstances
+        - rds:Connect
+      Resource: "*"
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-esbuild
+  - serverless-offline
+
+package:
+  # No incluyas todas las devDependencies en el ZIP final (por lo general solo necesitas las dependencies de runtime)
+  excludeDevDependencies: true
+
+  # Si quieres afinar aún más, puedes usar patterns para quitar archivos innecesarios
+  # (por ejemplo, tests, documentación, carpetas de tipos, etc.)
+  patterns:
+
+    # Excluimos archivos de tests de los módulos que no necesitas en producción
+    - '!**/node_modules/**/*'
+    - '!node_modules/**/crc-32/types/**'
+    - '!node_modules/**/test/**'
+    - '!node_modules/**/tests/**'
+    - '!node_modules/**/doc/**'
+    - '!node_modules/**/*.md'        # archivos Markdown de los paquetes
+    - '!node_modules/**/*.ts'        # a veces hay archivos .ts en subcarpetas
+    - '!node_modules/**/tslint.json' # quita tslint.json de los módulos (no necesario en production)
+    # Si tu carpeta de compilado es .build, debes excluir desde allí:
+    - '!.build/node_modules/**/*'
+    - '!.build/node_modules/**/crc-32/types/**'
+    - '!.build/node_modules/**/test/**'
+    - '!.build/node_modules/**/tests/**'
+    - '!.build/node_modules/**/doc/**'
+    - '!.build/node_modules/**/*.md'
+    - '!.build/node_modules/**/*.ts'
+    - '!.build/node_modules/**/tslint.json'
+
+functions:
+  createPago:
+    handler: src/handlers/pagos.create
+    events:
+      - http:
+          path: /pagos
+          method: post
+          cors: true
+
+  listPagos:
+    handler: src/handlers/pagos.list
+    events:
+      - http:
+          path: /pagos
+          method: get
+          cors: true
+
+  getPago:
+    handler: src/handlers/pagos.get
+    events:
+      - http:
+          path: /pagos/{pagoId}
+          method: get
+          cors: true
+
+  updateEstadoPago:
+    handler: src/handlers/pagos.updateEstado
+    events:
+      - http:
+          path: /pagos/{pagoId}/estado
+          method: put
+          cors: true 

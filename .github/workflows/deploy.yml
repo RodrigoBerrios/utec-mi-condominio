@@ -1,0 +1,225 @@
+name: Deploy to AWS
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # Determinar el ambiente basado en la rama
+  determine-environment:
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.set-env.outputs.environment }}
+      deploy: ${{ steps.set-env.outputs.deploy }}
+    steps:
+      - name: Determine environment
+        id: set-env
+        run: |
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "environment=production" >> $GITHUB_OUTPUT
+            echo "deploy=true" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+            echo "environment=development" >> $GITHUB_OUTPUT
+            echo "deploy=true" >> $GITHUB_OUTPUT
+          else
+            echo "environment=development" >> $GITHUB_OUTPUT
+            echo "deploy=false" >> $GITHUB_OUTPUT
+          fi
+
+  # Job de testing (sin ambiente)
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Run linting
+        run: npm run lint
+
+  # Job para construir artefactos
+  build:
+    runs-on: ubuntu-latest
+    needs: [test]
+    if: github.event_name == 'push'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build microservices
+        run: |
+          # Crear directorio de distribución
+          mkdir -p dist
+          
+          # Construir cada microservicio
+          for service in ms-inmuebles ms-cuotas ms-gastos ms-junta ms-pagos ms-notificaciones; do
+            if [ -d "$service" ]; then
+              echo "Building $service..."
+              cd $service
+              npm ci --only=production
+              zip -r ../dist/${service}.zip . -x "*.git*" "node_modules/.cache/*" "*.md" "tests/*" "*.test.js"
+              cd ..
+            fi
+          done
+          
+          # Crear common layer
+          mkdir -p layer/nodejs
+          cp package.json layer/nodejs/
+          cd layer/nodejs && npm ci --only=production && cd ../..
+          zip -r dist/common-layer.zip layer/
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lambda-packages
+          path: dist/
+          retention-days: 30
+
+  # Job para deployment con ambiente específico
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [determine-environment, build]
+    if: needs.determine-environment.outputs.deploy == 'true'
+    environment: ${{ needs.determine-environment.outputs.environment }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: lambda-packages
+          path: dist/
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.0
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: |
+          # Configurar backend basado en el ambiente
+          cat > backend.tf << EOF
+          terraform {
+            backend "s3" {
+              bucket = "${{ secrets.TERRAFORM_STATE_BUCKET }}"
+              key    = "infrastructure/terraform.tfstate"
+              region = "us-east-1"
+            }
+          }
+          EOF
+          terraform init
+
+      - name: Terraform Plan
+        working-directory: terraform
+        run: |
+          terraform plan -var="environment=${{ needs.determine-environment.outputs.environment }}" -out=tfplan
+
+      - name: Terraform Apply
+        working-directory: terraform
+        run: terraform apply -auto-approve tfplan
+
+      - name: Get Terraform Outputs
+        working-directory: terraform
+        run: |
+          echo "## 🚀 Deployment Successful!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Environment: ${{ needs.determine-environment.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Important URLs:" >> $GITHUB_STEP_SUMMARY
+          echo "- **API Gateway URL:** $(terraform output -raw api_gateway_url)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Frontend URL:** https://$(terraform output -raw cloudfront_domain_name)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Configuration for Frontend:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Cognito User Pool ID:** $(terraform output -raw cognito_user_pool_id)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Cognito Client ID:** $(terraform output -raw cognito_user_pool_client_id)" >> $GITHUB_STEP_SUMMARY
+
+  # Job para aplicar esquema de base de datos
+  deploy-database:
+    runs-on: ubuntu-latest
+    needs: [deploy]
+    if: needs.determine-environment.outputs.deploy == 'true'
+    environment: ${{ needs.determine-environment.outputs.environment }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform (for outputs)
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.0
+          terraform_wrapper: false
+
+      - name: Get Database Credentials
+        working-directory: terraform
+        run: |
+          terraform init
+          
+          # Obtener credenciales de la base de datos
+          DB_HOST=$(terraform output -raw aurora_cluster_endpoint)
+          DB_SECRET_ARN=$(terraform output -raw aurora_secret_arn)
+          
+          echo "DB_HOST=$DB_HOST" >> $GITHUB_ENV
+          echo "DB_SECRET_ARN=$DB_SECRET_ARN" >> $GITHUB_ENV
+
+      - name: Apply Database Schema
+        run: |
+          # Instalar PostgreSQL client
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client jq
+          
+          # Obtener credenciales del secret manager
+          SECRET=$(aws secretsmanager get-secret-value --secret-id $DB_SECRET_ARN --query SecretString --output text)
+          DB_PASSWORD=$(echo $SECRET | jq -r .password)
+          DB_USER=$(echo $SECRET | jq -r .username)
+          DB_NAME=$(echo $SECRET | jq -r .dbname)
+          
+          # Aplicar esquema si el archivo existe
+          if [ -f database-schema.sql ]; then
+            echo "Aplicando esquema de base de datos..."
+            export PGPASSWORD=$DB_PASSWORD
+            psql -h $DB_HOST -U $DB_USER -d $DB_NAME -f database-schema.sql
+            echo "✅ Esquema aplicado exitosamente"
+          else
+            echo "⚠️ No se encontró database-schema.sql, saltando..."
+          fi 

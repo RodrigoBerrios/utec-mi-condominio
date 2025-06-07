@@ -1,0 +1,120 @@
+service: g2-ms-inmobiliarias
+
+frameworkVersion: '3'
+
+custom:
+  dotenv:
+    path: ../.env
+  esbuild:
+    bundle: true
+    minify: false
+    sourcemap: true
+    target: 'node18'
+    platform: 'node'
+    keepNames: true
+    external:
+      - aws-sdk
+      - pg-native
+    exclude:
+      - 'aws-sdk'
+    mainFields: ['main', 'module']
+    define:
+      'process.env.NODE_ENV': '"production"'
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+  environment:
+    STAGE: ${self:provider.stage}
+    DB_HOST: ${env:DB_HOST, 'g2-database-instance-1.cfqay6u8sikg.us-east-1.rds.amazonaws.com'}
+    DB_PORT: ${env:DB_PORT, '5432'}
+    DB_NAME: ${env:DB_NAME, 'postgres'}
+    DB_USER: ${env:DB_USER, 'postgres'}
+    DB_PASSWORD: ${env:DB_PASSWORD, 'Admin_2025'}
+    EVENTBRIDGE_BUS: ${env:EVENTBRIDGE_BUS, 'condominio-events'}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - events:PutEvents
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - rds:DescribeDBInstances
+        - rds:Connect
+      Resource: "*"
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-esbuild
+  - serverless-offline
+
+package:
+  excludeDevDependencies: true
+  patterns:
+    - '!**/node_modules/**/*'
+    - '!node_modules/**/crc-32/types/**'
+    - '!node_modules/**/test/**'
+    - '!node_modules/**/tests/**'
+    - '!node_modules/**/doc/**'
+    - '!node_modules/**/*.md'
+    - '!node_modules/**/*.ts'
+    - '!node_modules/**/tslint.json'
+    - '!.build/node_modules/**/*'
+    - '!.build/node_modules/**/crc-32/types/**'
+    - '!.build/node_modules/**/test/**'
+    - '!.build/node_modules/**/tests/**'
+    - '!.build/node_modules/**/doc/**'
+    - '!.build/node_modules/**/*.md'
+    - '!.build/node_modules/**/*.ts'
+    - '!.build/node_modules/**/tslint.json'
+
+functions:
+  createInmobiliaria:
+    handler: src/handlers/inmobiliarias.create
+    events:
+      - http:
+          path: /inmobiliarias
+          method: post
+          cors: true
+
+  listInmobiliarias:
+    handler: src/handlers/inmobiliarias.list
+    events:
+      - http:
+          path: /inmobiliarias
+          method: get
+          cors: true
+
+  getInmobiliaria:
+    handler: src/handlers/inmobiliarias.getById
+    events:
+      - http:
+          path: /inmobiliarias/{id}
+          method: get
+          cors: true
+
+  updateInmobiliaria:
+    handler: src/handlers/inmobiliarias.update
+    events:
+      - http:
+          path: /inmobiliarias/{id}
+          method: put
+          cors: true
+
+  deleteInmobiliaria:
+    handler: src/handlers/inmobiliarias.delete
+    events:
+      - http:
+          path: /inmobiliarias/{id}
+          method: delete
+          cors: true
+
+  getInmueblesInmobiliaria:
+    handler: src/handlers/inmobiliarias.getInmuebles
+    events:
+      - http:
+          path: /inmobiliarias/{id}/inmuebles
+          method: get
+          cors: true 
