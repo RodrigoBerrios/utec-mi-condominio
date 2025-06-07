@@ -48,6 +48,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "documents" {
     id     = "document_lifecycle"
     status = "Enabled"
 
+    filter {}
+
     # Transición a IA después de 30 días
     transition {
       days          = 30

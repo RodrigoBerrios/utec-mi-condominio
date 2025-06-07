@@ -28,13 +28,13 @@ provider:
   region: us-east-1
   environment:
     STAGE: ${self:provider.stage}
-    DB_HOST: ${env:DB_HOST, 'g2-database-instance-1.cfqay6u8sikg.us-east-1.rds.amazonaws.com'}
-    DB_PORT: ${env:DB_PORT, '5432'}
-    DB_NAME: ${env:DB_NAME, 'postgres'}
-    DB_USER: ${env:DB_USER, 'postgres'}
-    DB_PASSWORD: ${env:DB_PASSWORD, 'Admin_2025'}
-    S3_BUCKET: ${env:S3_BUCKET, 'condominio-comprobantes-dev'}
-    EVENTBRIDGE_BUS: ${env:EVENTBRIDGE_BUS, 'condominio-events'}
+    DB_HOST: ${env:DB_HOST}
+    DB_PORT: ${env:DB_PORT}
+    DB_NAME: ${env:DB_NAME}
+    DB_USER: ${env:DB_USER}
+    DB_PASSWORD: ${env:DB_PASSWORD}
+    S3_BUCKET: ${env:S3_BUCKET}
+    EVENTBRIDGE_BUS: ${env:EVENTBRIDGE_BUS}
   iamRoleStatements:
     - Effect: Allow
       Action:

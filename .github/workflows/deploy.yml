@@ -28,10 +28,61 @@ jobs:
             echo "deploy=false" >> $GITHUB_OUTPUT
           fi
 
-  # Job para deployment con Serverless Framework
-  deploy-microservices:
+  # Job 1: PRIMERO - Desplegar infraestructura con Terraform
+  deploy-infrastructure:
     runs-on: ubuntu-latest
     needs: [determine-environment]
+    if: needs.determine-environment.outputs.deploy == 'true'
+    environment: ${{ needs.determine-environment.outputs.environment }}
+    outputs:
+      api_gateway_url: ${{ steps.terraform-outputs.outputs.api_gateway_url }}
+      cognito_user_pool_id: ${{ steps.terraform-outputs.outputs.cognito_user_pool_id }}
+      cognito_client_id: ${{ steps.terraform-outputs.outputs.cognito_client_id }}
+      aurora_endpoint: ${{ steps.terraform-outputs.outputs.aurora_endpoint }}
+      documents_bucket: ${{ steps.terraform-outputs.outputs.documents_bucket }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        run: |
+          wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+          sudo apt update && sudo apt install terraform=1.5.0-1
+
+      - name: Deploy infrastructure with Terraform
+        working-directory: terraform
+        run: |
+          echo "🏗️ Desplegando infraestructura con Terraform..."
+          
+          terraform init
+          terraform plan -var="environment=${{ needs.determine-environment.outputs.environment }}" -out=tfplan
+          terraform apply -auto-approve tfplan
+          
+          echo "✅ Infraestructura desplegada exitosamente"
+
+      - name: Get Terraform outputs
+        id: terraform-outputs
+        working-directory: terraform
+        run: |
+          echo "api_gateway_url=$(terraform output -raw api_gateway_url 2>/dev/null || echo '')" >> $GITHUB_OUTPUT
+          echo "cognito_user_pool_id=$(terraform output -raw cognito_user_pool_id 2>/dev/null || echo '')" >> $GITHUB_OUTPUT
+          echo "cognito_client_id=$(terraform output -raw cognito_user_pool_client_id 2>/dev/null || echo '')" >> $GITHUB_OUTPUT
+          echo "aurora_endpoint=$(terraform output -raw aurora_cluster_endpoint 2>/dev/null || echo '')" >> $GITHUB_OUTPUT
+          echo "documents_bucket=$(terraform output -raw documents_bucket_name 2>/dev/null || echo '')" >> $GITHUB_OUTPUT
+
+  # Job 2: SEGUNDO - Desplegar microservicios con Serverless (usando outputs de Terraform)
+  deploy-microservices:
+    runs-on: ubuntu-latest
+    needs: [determine-environment, deploy-infrastructure]
     if: needs.determine-environment.outputs.deploy == 'true'
     environment: ${{ needs.determine-environment.outputs.environment }}
     
@@ -62,11 +113,22 @@ jobs:
           echo "✅ Serverless Framework y plugins instalados globalmente"
 
       - name: Deploy microservices with Serverless
+        env:
+          API_GATEWAY_URL: ${{ needs.deploy-infrastructure.outputs.api_gateway_url }}
+          COGNITO_USER_POOL_ID: ${{ needs.deploy-infrastructure.outputs.cognito_user_pool_id }}
+          COGNITO_CLIENT_ID: ${{ needs.deploy-infrastructure.outputs.cognito_client_id }}
+          AURORA_ENDPOINT: ${{ needs.deploy-infrastructure.outputs.aurora_endpoint }}
+          DOCUMENTS_BUCKET: ${{ needs.deploy-infrastructure.outputs.documents_bucket }}
         run: |
           # Lista de microservicios a desplegar
           MICROSERVICES=("ms-inmuebles" "ms-cuotas" "ms-gastos" "ms-junta" "ms-pagos" "ms-notificaciones" "ms-inmobiliarias")
           
           echo "🚀 Desplegando microservicios en ambiente: ${{ needs.determine-environment.outputs.environment }}"
+          echo "📋 Variables de infraestructura disponibles:"
+          echo "  - API Gateway URL: $API_GATEWAY_URL"
+          echo "  - Cognito User Pool: $COGNITO_USER_POOL_ID"
+          echo "  - Aurora Endpoint: $AURORA_ENDPOINT"
+          echo "  - Documents Bucket: $DOCUMENTS_BUCKET"
           
           for service in "${MICROSERVICES[@]}"; do
             if [ -d "$service" ]; then
@@ -115,62 +177,10 @@ jobs:
             fi
           done
 
-      - name: Deploy infrastructure with Terraform
-        run: |
-          # Setup Terraform
-          wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
-          echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
-          sudo apt update && sudo apt install terraform=1.5.0-1
-          
-          cd terraform
-          
-          # Configurar backend basado en el ambiente
-          cat > backend.tf << EOF
-          terraform {
-            backend "s3" {
-              bucket = "${{ secrets.TERRAFORM_STATE_BUCKET }}"
-              key    = "infrastructure/terraform.tfstate"
-              region = "us-east-1"
-            }
-          }
-          EOF
-          
-          terraform init
-          terraform plan -var="environment=${{ needs.determine-environment.outputs.environment }}" -out=tfplan
-          terraform apply -auto-approve tfplan
-
-      - name: Get Deployment Summary
-        run: |
-          echo "## 🚀 Deployment Successful!" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Environment: ${{ needs.determine-environment.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Microservices Deployed:" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ ms-inmuebles" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ ms-cuotas" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ ms-gastos" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ ms-junta" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ ms-pagos" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ ms-notificaciones" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ ms-inmobiliarias" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          # Si existe terraform, obtener outputs
-          if [ -d "terraform" ]; then
-            cd terraform
-            echo "### Infrastructure URLs:" >> $GITHUB_STEP_SUMMARY
-            echo "- **API Gateway URL:** $(terraform output -raw api_gateway_url 2>/dev/null || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
-            echo "- **Frontend URL:** https://$(terraform output -raw cloudfront_domain_name 2>/dev/null || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### Configuration:" >> $GITHUB_STEP_SUMMARY
-            echo "- **Cognito User Pool ID:** $(terraform output -raw cognito_user_pool_id 2>/dev/null || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
-            echo "- **Cognito Client ID:** $(terraform output -raw cognito_user_pool_client_id  2>/dev/null || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
-          fi
-
-  # Job para aplicar esquema de base de datos
+  # Job 3: TERCERO - Aplicar esquema de base de datos
   deploy-database:
     runs-on: ubuntu-latest
-    needs: [deploy-microservices]
+    needs: [determine-environment, deploy-infrastructure, deploy-microservices]
     if: needs.determine-environment.outputs.deploy == 'true'
     environment: ${{ needs.determine-environment.outputs.environment }}
     
@@ -227,4 +237,29 @@ jobs:
             fi
           else
             echo "⚠️ No se encontraron credenciales de base de datos, saltando..."
-          fi 
+          fi
+
+      - name: Get Deployment Summary
+        run: |
+          echo "## 🚀 Deployment Successful!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Environment: ${{ needs.determine-environment.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Deployment Order:" >> $GITHUB_STEP_SUMMARY
+          echo "1. ✅ **Infrastructure** (Terraform) - VPC, RDS, Lambda, API Gateway, etc." >> $GITHUB_STEP_SUMMARY
+          echo "2. ✅ **Microservices** (Serverless) - Business logic deployment" >> $GITHUB_STEP_SUMMARY
+          echo "3. ✅ **Database Schema** - Tables and initial data" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Microservices Deployed:" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ ms-inmuebles" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ ms-cuotas" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ ms-gastos" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ ms-junta" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ ms-pagos" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ ms-notificaciones" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ ms-inmobiliarias" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Infrastructure URLs:" >> $GITHUB_STEP_SUMMARY
+          echo "- **API Gateway URL:** ${{ needs.deploy-infrastructure.outputs.api_gateway_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Cognito User Pool ID:** ${{ needs.deploy-infrastructure.outputs.cognito_user_pool_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Database Endpoint:** ${{ needs.deploy-infrastructure.outputs.aurora_endpoint }}" >> $GITHUB_STEP_SUMMARY 

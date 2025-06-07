@@ -28,8 +28,8 @@ provider:
   environment:
     STAGE: ${self:provider.stage}
     DYNAMODB_TABLE: ${self:service}-${self:provider.stage}-notificaciones
-    EVENTBRIDGE_BUS: ${env:EVENTBRIDGE_BUS, 'condominio-events'}
-    FROM_EMAIL: ${env:FROM_EMAIL, 'noreply@micondominio.com'}
+    EVENTBRIDGE_BUS: ${env:EVENTBRIDGE_BUS}
+    FROM_EMAIL: ${env:FROM_EMAIL}
   iamRoleStatements:
     - Effect: Allow
       Action:
