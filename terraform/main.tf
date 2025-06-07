@@ -10,9 +10,9 @@ terraform {
 
   backend "s3" {
     # Configurar después con los valores específicos
-    # bucket = "g2-mi-condominio-terraform-state"
-    # key    = "infrastructure/terraform.tfstate"
-    # region = "us-east-1"
+    bucket = "g2-mi-condominio-terraform-state-123456"
+    key    = "infrastructure/terraform.tfstate"
+    region = "us-east-1"
   }
 }
 
