@@ -53,12 +53,18 @@ jobs:
           aws-region: us-east-1
 
       - name: Install Serverless Framework
-        run: npm install -g serverless
+        run: |
+          npm install -g serverless@3.38.0
+          npm install -g serverless-esbuild@1.55.0
+          npm install -g serverless-dotenv-plugin@6.0.0  
+          npm install -g serverless-offline@13.0.0
+          serverless --version
+          echo "✅ Serverless Framework y plugins instalados globalmente"
 
       - name: Deploy microservices with Serverless
         run: |
           # Lista de microservicios a desplegar
-          MICROSERVICES=("ms-inmuebles" "ms-cuotas" "ms-gastos" "ms-junta" "ms-pagos" "ms-notificaciones")
+          MICROSERVICES=("ms-inmuebles" "ms-cuotas" "ms-gastos" "ms-junta" "ms-pagos" "ms-notificaciones" "ms-inmobiliarias")
           
           echo "🚀 Desplegando microservicios en ambiente: ${{ needs.determine-environment.outputs.environment }}"
           
@@ -67,13 +73,40 @@ jobs:
               echo "📦 Desplegando $service..."
               cd $service
               
-              # Instalar dependencias del microservicio
-              if [ -f "package.json" ]; then
-                npm ci
+              # Verificar que existe serverless.yml
+              if [ ! -f "serverless.yml" ]; then
+                echo "❌ Error: serverless.yml no encontrado en $service"
+                cd ..
+                continue
               fi
               
+              # Limpiar cache y builds anteriores
+              rm -rf .serverless .build node_modules/.cache
+              
+              # Instalar dependencias del microservicio
+              if [ -f "package.json" ]; then
+                echo "📋 Instalando dependencias para $service..."
+                npm ci --legacy-peer-deps --ignore-scripts
+              fi
+              
+              # Verificar configuración de Serverless
+              echo "🔧 Verificando configuración de $service..."
+              serverless print --stage ${{ needs.determine-environment.outputs.environment }} || {
+                echo "❌ Error en configuración de $service"
+                cd ..
+                continue  
+              }
+              
               # Desplegar con Serverless
-              serverless deploy --stage ${{ needs.determine-environment.outputs.environment }} --verbose
+              echo "🚀 Iniciando deploy de $service..."
+              serverless deploy \
+                --stage ${{ needs.determine-environment.outputs.environment }} \
+                --verbose \
+                --force || {
+                echo "❌ Error desplegando $service"
+                cd ..
+                exit 1
+              }
               
               echo "✅ $service desplegado exitosamente"
               cd ..
@@ -119,6 +152,7 @@ jobs:
           echo "- ✅ ms-junta" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ ms-pagos" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ ms-notificaciones" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ ms-inmobiliarias" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           # Si existe terraform, obtener outputs
