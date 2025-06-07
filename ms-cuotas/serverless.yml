@@ -94,6 +94,54 @@ functions:
           method: get
           cors: true
 
+  getCuota:
+    handler: src/handlers/cuotas.getById
+    events:
+      - http:
+          path: /cuotas/{id}
+          method: get
+          cors: true
+
+  updateCuota:
+    handler: src/handlers/cuotas.update
+    events:
+      - http:
+          path: /cuotas/{id}
+          method: put
+          cors: true
+
+  deleteCuota:
+    handler: src/handlers/cuotas.delete
+    events:
+      - http:
+          path: /cuotas/{id}
+          method: delete
+          cors: true
+
+  markCuotaPagada:
+    handler: src/handlers/cuotas.markPagada
+    events:
+      - http:
+          path: /cuotas/{id}/pagar
+          method: post
+          cors: true
+
+  getCuotasByUsuario:
+    handler: src/handlers/cuotas.getByUsuario
+    events:
+      - http:
+          path: /cuotas/usuario/{idUsuario}
+          method: get
+          cors: true
+
+  getCuotasByPeriodo:
+    handler: src/handlers/cuotas.getByPeriodo
+    events:
+      - http:
+          path: /cuotas/periodo/{periodo}
+          method: get
+          cors: true
+
   getEstadoCuenta:
     handler: src/handlers/cuotas.getEstadoCuenta
     events:
@@ -110,8 +158,46 @@ functions:
           method: get
           cors: true
 
+  getResumenCuotas:
+    handler: src/handlers/resumen.get
+    events:
+      - http:
+          path: /cuotas/resumen
+          method: get
+          cors: true
+
+  getReporteCuotas:
+    handler: src/handlers/reportes.cuotas
+    events:
+      - http:
+          path: /cuotas/reporte
+          method: get
+          cors: true
+
+  getCuotasVencidas:
+    handler: src/handlers/cuotas.getVencidas
+    events:
+      - http:
+          path: /cuotas/vencidas
+          method: get
+          cors: true
+
+  generateCuotasMasivas:
+    handler: src/handlers/cuotas.generateMasivas
+    events:
+      - http:
+          path: /cuotas/generar-masivas
+          method: post
+          cors: true
+
   # CRON para verificar cuotas vencidas y enviar eventos
   checkCuotasVencidas:
     handler: src/handlers/cron.checkCuotasVencidas
     events:
-      - schedule: rate(1 day)  # Ejecuta diariamente 
+      - schedule: rate(1 day)  # Ejecuta diariamente
+
+  # CRON para generar cuotas mensuales automáticamente
+  generateCuotasMensuales:
+    handler: src/handlers/cron.generateCuotasMensuales
+    events:
+      - schedule: cron(0 0 1 * ? *)  # Ejecuta el día 1 de cada mes a las 00:00 
