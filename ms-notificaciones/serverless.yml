@@ -90,7 +90,7 @@ functions:
           method: post
           cors: true
 
-  configurarNotificacionAutomatica:
+  confNotificacionAutomatica:
     handler: src/handlers/notificaciones.configurarNotificacionAutomatica
     events:
       - http:
